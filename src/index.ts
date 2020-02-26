@@ -1,44 +1,63 @@
-import { Authenticate, AuthData, Header } from './utils/Auth';
 import {v4 as uuid} from 'uuid';
 import io from 'socket.io-client';
+import axios from 'axios';
 
-interface CustomerData {
-    name: string;
-    email: string;
-    info: any;
+interface UserConnection {
+    attendence: () => void;
+    message: {
+        send: (message: string) => void;
+        listen: (callback: (message: { from: string; iat: string; message: string; }) => void) => void;
+    };
 }
 
-const CustomerConnection = (url: string, customer: CustomerData) => {
-    const connection = io(url, { query: { id: uuid(), ...customer } });
+interface CustomerConnection {
+    message: {
+        send: (message: string) => void;
+        listen: (callback: (message: { from: string; iat: string; message: string; }) => void) => void;
+    };
+}
 
+const Chatio = (url: string) => {
     return {
-        sendMessage: (msg: string) => {
-            connection.emit(customer.email, {command: 'send', data: msg});
+        User: async (email: string, password: string): Promise<UserConnection> => {
+            const token = await axios.post(`${url}/signin`, { email, password });
+            const socket = io(url, {
+                query: {authorization: `Bearer ${token}`},
+                forceNew: true,
+                transports: ['websocket'],
+            });
+            return {
+                attendence: () => {
+                    socket.emit(email, { command: 'get:attendence', data: null });
+                },
+                message: {
+                    listen: (callback: (message: { from: string; iat: string; message: string; }) => void) => {
+                        socket.on('message', callback);
+                    },
+                    send: (message: string) => {
+                        socket.emit(email, { command: 'send', data: message });
+                    },
+                },
+            };
         },
-
-        messages: (callback: (message: { from: string; iat: string; message: string; }) => void) => {
-            connection.on('message', callback);
+        Customer: async (name: string, email: string, info: any): Promise<CustomerConnection> => {
+            const socket = io(url, {
+                query: { id: uuid(), name, email, info },
+                forceNew: true,
+                transports: ['websocket'],
+            });
+            return {
+                message: {
+                    listen: (callback: (message: { from: string; iat: string; message: string; }) => void) => {
+                        socket.on('message', callback);
+                    },
+                    send: (message: string) => {
+                        socket.emit(email, { command: 'send', data: message });
+                    },
+                },
+            };
         },
     };
 };
 
-const UserConnection = async (url: string, data: AuthData) => {
-    const token: string = await Authenticate(`${url}/signin`, data);
-    const connection = io(url, {transportOptions: Header(token)});
-
-    return {
-        startAttendende: () => {
-            connection.emit(data.email, {command: 'get:attendence', data: null});
-        },
-
-        sendMessage: (msg: string) => {
-            connection.emit(data.email, {command: 'send', data: msg});
-        },
-
-        messages: (callback: (message: { from: string; iat: string; message: string; }) => void) => {
-            connection.on('message', callback);
-        },
-    };
-};
-
-export default { CustomerConnection, UserConnection };
+export default Chatio;
